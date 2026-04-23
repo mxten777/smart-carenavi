@@ -16,6 +16,7 @@ export const useOrderStore = create((set) => ({
   /** 주문 생성 */
   submitOrder: async ({
     productId,
+    userId,
     userName,
     phone,
     contractType,
@@ -32,6 +33,7 @@ export const useOrderStore = create((set) => ({
       .from('orders')
       .insert({
         product_id: productId,
+        user_id: userId ?? null,
         user_name: userName,
         phone,
         contract_type: contractType ?? 'purchase',

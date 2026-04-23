@@ -1,5 +1,16 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { supabase } from '@/lib/supabase'
+
+/** Supabase Storage 업로드 이미지 URL인 경우 공개 URL로 변환 */
+function resolveImageUrl(url) {
+  if (!url) return null
+  // 이미 절대 URL이면 그대로 반환
+  if (url.startsWith('http')) return url
+  // storage path(예: products/xxx.jpg)인 경우 공개 URL 생성
+  const { data } = supabase.storage.from('product-images').getPublicUrl(url)
+  return data?.publicUrl ?? null
+}
 
 const CATEGORY_CONFIG = {
   이동보조: { emoji: '🦽', gradientStyle: 'linear-gradient(135deg, #dbeafe 0%, #bfdbfe 50%, #93c5fd 100%)', badge: 'bg-blue-100 text-blue-700',   dot: '#3b82f6' },
@@ -11,6 +22,7 @@ const CATEGORY_CONFIG = {
 
 export default function ProductCard({ product, compact = false }) {
   const [imgError, setImgError] = useState(false)
+  const [imgLoaded, setImgLoaded] = useState(false)
   const cfg = CATEGORY_CONFIG[product.category] ?? {
     emoji: '📦',
     gradientStyle: 'linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%)',
@@ -19,6 +31,7 @@ export default function ProductCard({ product, compact = false }) {
   }
   const grades = product.target_grade?.join(', ') ?? '전체'
   const selfPay = Math.round(product.price * 0.15).toLocaleString()
+  const imageUrl = resolveImageUrl(product.image_url)
 
   return (
     <Link
@@ -27,14 +40,24 @@ export default function ProductCard({ product, compact = false }) {
     >
       {/* 이미지 영역 */}
       <div className="relative overflow-hidden" style={{ aspectRatio: '4/3' }}>
-        {product.image_url && !imgError ? (
-          <img
-            src={product.image_url}
-            alt={product.name}
-            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-            loading="lazy"
-            onError={() => setImgError(true)}
-          />
+        {imageUrl && !imgError ? (
+          <>
+            {/* 로딩 스켈레톤 */}
+            {!imgLoaded && (
+              <div
+                className="absolute inset-0 animate-pulse"
+                style={{ background: cfg.gradientStyle }}
+              />
+            )}
+            <img
+              src={imageUrl}
+              alt={product.name}
+              className={`w-full h-full object-cover group-hover:scale-110 transition-transform duration-500 ${imgLoaded ? 'opacity-100' : 'opacity-0'}`}
+              loading="lazy"
+              onLoad={() => setImgLoaded(true)}
+              onError={() => setImgError(true)}
+            />
+          </>
         ) : (
           <div
             className="w-full h-full flex flex-col items-center justify-center gap-3 relative overflow-hidden"

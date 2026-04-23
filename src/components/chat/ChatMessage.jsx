@@ -9,7 +9,7 @@ const escapeHtml = (str) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
 
-export default function ChatMessage({ message }) {
+export default function ChatMessage({ message, isStreaming = false }) {
   const isUser = message.role === 'user'
 
   const formatContent = (text) => {
@@ -51,6 +51,9 @@ export default function ChatMessage({ message }) {
         }`}
       >
         {formatContent(message.content)}
+        {isStreaming && (
+          <span className="inline-block w-0.5 h-4 bg-brand-500 ml-0.5 align-middle animate-pulse" />
+        )}
       </div>
 
       {/* 추천 제품 (AI 메시지에만) */}

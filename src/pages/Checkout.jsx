@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useOrderStore } from '@/store/orderStore'
+import { useAuthStore } from '@/store/authStore'
 
 const INPUT_CLS = (err) =>
   `w-full px-4 py-3 rounded-xl border text-sm focus:outline-none focus:ring-1 ${
@@ -9,9 +10,15 @@ const INPUT_CLS = (err) =>
       : 'border-gray-200 focus:border-brand-400 focus:ring-brand-100'
   }`
 
+// 모바일에서 숫자 키패드 자동 표시
+const TEL_PROPS = { type: 'tel', inputMode: 'tel', autoComplete: 'tel' }
+const DATE_PROPS = { inputMode: 'numeric' }
+
 export default function Checkout() {
   const navigate = useNavigate()
   const { pendingProduct, isSubmitting, error, submitOrder } = useOrderStore()
+  const { user, profile } = useAuthStore()
+  const [summaryOpen, setSummaryOpen] = useState(true)
 
   const [form, setForm] = useState({
     contractType: 'rental',
@@ -29,6 +36,17 @@ export default function Checkout() {
   useEffect(() => {
     if (!pendingProduct) navigate('/products', { replace: true })
   }, [pendingProduct, navigate])
+
+  useEffect(() => {
+    if (profile) {
+      setForm((f) => ({
+        ...f,
+        userName: profile.name ?? f.userName,
+        phone: profile.phone ?? f.phone,
+        careGrade: profile.care_grade ? String(profile.care_grade) : f.careGrade,
+      }))
+    }
+  }, [profile])
 
   if (!pendingProduct) return null
 
@@ -67,6 +85,7 @@ export default function Checkout() {
     try {
       await submitOrder({
         productId: pendingProduct.id,
+        userId: user?.id ?? null,
         userName: form.userName.trim(),
         phone: form.phone.trim(),
         contractType: form.contractType,
@@ -87,30 +106,63 @@ export default function Checkout() {
   const isRental = form.contractType === 'rental'
 
   return (
-    <div className="max-w-xl mx-auto px-4 py-10">
-      <h1 className="text-2xl font-bold text-gray-900 mb-1">구매 신청</h1>
-      <p className="text-gray-500 mb-8">주문 내용을 확인하고 신청 정보를 입력해 주세요</p>
+    <div className="max-w-xl mx-auto px-4 pt-6 pb-28">
+      {/* 페이지 제목 */}
+      <h1 className="text-xl font-bold text-gray-900 mb-1">구매 신청</h1>
+      <p className="text-sm text-gray-500 mb-5">주문 내용을 확인하고 신청 정보를 입력해 주세요</p>
 
-      {/* 주문 제품 요약 */}
-      <div className="bg-gray-50 rounded-xl p-4 mb-6 flex gap-4 border border-gray-100">
-        {pendingProduct.image_url && (
-          <img
-            src={pendingProduct.image_url}
-            alt={pendingProduct.name}
-            className="w-20 h-20 object-cover rounded-lg flex-shrink-0"
-          />
-        )}
-        <div>
-          <span className="text-xs text-brand-600 font-medium">{pendingProduct.category}</span>
-          <h2 className="font-semibold text-gray-900 mt-0.5 mb-1">{pendingProduct.name}</h2>
-          <p className="text-sm text-gray-500">정가: {pendingProduct.price.toLocaleString()}원</p>
-          <p className="text-sm font-semibold text-brand-700">
-            본인부담 (15%): 약 {selfPay}원
+      {/* 비로그인 시 로그인 유도 배너 */}
+      {!user && (
+        <div className="bg-brand-50 border border-brand-200 rounded-xl px-4 py-3 mb-5 flex items-center justify-between gap-3">
+          <p className="text-sm text-brand-700">
+            로그인하면 이름·연락처·등급이 자동으로 채워집니다
           </p>
+          <Link to="/login" className="text-sm font-semibold text-brand-600 hover:underline flex-shrink-0">
+            로그인 →
+          </Link>
         </div>
+      )}
+
+      {/* 주문 제품 요약 (접기/펼치기) */}
+      <div className="bg-gray-50 rounded-xl border border-gray-100 mb-5 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setSummaryOpen((v) => !v)}
+          className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-gray-700"
+        >
+          <span className="flex items-center gap-2">
+            <span className="text-base">🛍️</span>
+            {pendingProduct.name}
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="text-brand-700 font-semibold">본인부담 ~{selfPay}원</span>
+            <svg
+              className={`w-4 h-4 text-gray-400 transition-transform ${summaryOpen ? 'rotate-180' : ''}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </span>
+        </button>
+        {summaryOpen && (
+          <div className="flex gap-4 px-4 pb-4 border-t border-gray-100 pt-3">
+            {pendingProduct.image_url && (
+              <img
+                src={pendingProduct.image_url}
+                alt={pendingProduct.name}
+                className="w-16 h-16 object-cover rounded-lg flex-shrink-0"
+              />
+            )}
+            <div>
+              <span className="text-xs text-brand-600 font-medium">{pendingProduct.category}</span>
+              <p className="text-sm text-gray-500 mt-0.5">정가: {pendingProduct.price.toLocaleString()}원</p>
+              <p className="text-sm font-semibold text-brand-700">본인부담 (15%): 약 {selfPay}원</p>
+            </div>
+          </div>
+        )}
       </div>
 
-      <form onSubmit={handleSubmit} noValidate className="space-y-6">
+      <form onSubmit={handleSubmit} noValidate className="space-y-5">
 
         {/* 대여 / 구매 선택 */}
         <div>
@@ -124,7 +176,7 @@ export default function Checkout() {
             ].map((opt) => (
               <label
                 key={opt.value}
-                className={`flex flex-col items-center gap-1 cursor-pointer rounded-xl border-2 p-4 transition-all ${
+                className={`flex flex-col items-center gap-1 cursor-pointer rounded-xl border-2 p-3.5 transition-all ${
                   form.contractType === opt.value
                     ? 'border-brand-500 bg-brand-50'
                     : 'border-gray-200 hover:border-brand-300'
@@ -139,7 +191,7 @@ export default function Checkout() {
                   className="sr-only"
                 />
                 <span className="text-2xl">{opt.icon}</span>
-                <span className="font-semibold text-gray-800">{opt.label}</span>
+                <span className="font-semibold text-gray-800 text-sm">{opt.label}</span>
                 <span className="text-xs text-gray-500">{opt.desc}</span>
               </label>
             ))}
@@ -161,6 +213,7 @@ export default function Checkout() {
             value={form.userName}
             onChange={set('userName')}
             placeholder="홍길동"
+            autoComplete="name"
             className={INPUT_CLS(validationErrors.userName)}
           />
           {validationErrors.userName && (
@@ -174,7 +227,7 @@ export default function Checkout() {
             연락처 <span className="text-red-500">*</span>
           </label>
           <input
-            type="tel"
+            {...TEL_PROPS}
             value={form.phone}
             onChange={set('phone')}
             placeholder="010-1234-5678"
@@ -192,6 +245,7 @@ export default function Checkout() {
           </label>
           <input
             type="text"
+            {...DATE_PROPS}
             value={form.birthDate}
             onChange={set('birthDate')}
             placeholder="1945-06-15"
@@ -213,6 +267,7 @@ export default function Checkout() {
             value={form.address}
             onChange={set('address')}
             placeholder="서울특별시 ○○구 ○○로 000"
+            autoComplete="street-address"
             className={`${INPUT_CLS(validationErrors.address)} mb-2`}
           />
           <input
@@ -275,7 +330,7 @@ export default function Checkout() {
               type="checkbox"
               checked={form.agreedPrivacy}
               onChange={set('agreedPrivacy')}
-              className="mt-0.5 w-4 h-4 rounded accent-brand-600 flex-shrink-0"
+              className="mt-0.5 w-5 h-5 rounded accent-brand-600 flex-shrink-0"
             />
             <span className="text-sm text-gray-700 leading-relaxed">
               <strong className="text-gray-900">[필수] 개인정보 수집·이용에 동의합니다.</strong>
@@ -299,26 +354,42 @@ export default function Checkout() {
           </p>
         )}
 
-        {/* 제출 */}
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="w-full bg-brand-600 hover:bg-brand-700 text-white font-semibold py-4 rounded-xl text-base transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-        >
-          {isSubmitting ? '처리 중...' : '상담 신청하기'}
-        </button>
-
-        <p className="text-xs text-center text-gray-400">
-          신청 후 영업일 기준 1~2일 내 담당 상담원이 연락드립니다
-        </p>
-
+        {/* 뒤로 가기 링크 */}
         <Link
           to={`/product/${pendingProduct.id}`}
-          className="block text-center text-sm text-gray-400 hover:text-gray-600"
+          className="block text-center text-sm text-gray-400 hover:text-gray-600 py-2"
         >
           ← 제품 상세로 돌아가기
         </Link>
       </form>
+
+      {/* 고정 하단 제출 버튼 (모바일 thumb zone) */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-4 py-3 shadow-lg z-10">
+        <div className="max-w-xl mx-auto flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-gray-500 truncate">{pendingProduct.name}</p>
+            <p className="text-sm font-bold text-brand-700">본인부담 ~{selfPay}원</p>
+          </div>
+          <button
+            type="submit"
+            form="checkout-form"
+            disabled={isSubmitting}
+            onClick={handleSubmit}
+            className="bg-brand-600 hover:bg-brand-700 active:bg-brand-800 text-white font-semibold px-6 py-3.5 rounded-xl text-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex-shrink-0"
+          >
+            {isSubmitting ? (
+              <span className="flex items-center gap-2">
+                <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                처리 중...
+              </span>
+            ) : '상담 신청하기'}
+          </button>
+        </div>
+        <p className="text-[10px] text-center text-gray-400 mt-1">
+          신청 후 영업일 기준 1~2일 내 담당 상담원이 연락드립니다
+        </p>
+      </div>
     </div>
   )
 }
+

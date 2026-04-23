@@ -1,5 +1,8 @@
 import { supabase } from './supabase'
-import { generateChatResponse } from './openai'
+import { getMockResponse } from './openai'
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 // ============================================================
 // RAG 시스템 프롬프트 빌더
@@ -180,38 +183,50 @@ function formatChunksContext(chunks) {
  * @returns {Promise<{content: string, contextData: object, recommendedProducts: Array, sessionId: string}>}
  */
 export async function processChat(userMessage, history = [], sessionId = null) {
-  // 1. RAG 컨텍스트 빌드
-  const { systemPrompt, contextData, recommendedProducts } = await buildRagContext(userMessage)
+  // 1. Edge Function 호출 (서버사이드 OpenAI 호출 — API 키 노출 없음)
+  try {
+    const { data, error } = await supabase.functions.invoke('chat', {
+      body: {
+        message: userMessage,
+        history: history.map(({ role, content }) => ({ role, content })),
+        sessionId,
+      },
+    })
 
-  // 2. 대화 히스토리 구성
-  const messages = [
-    ...history.map((m) => ({ role: m.role, content: m.content })),
-    { role: 'user', content: userMessage },
-  ]
+    if (error) throw error
 
-  // 3. AI 응답 생성
-  const aiContent = await generateChatResponse(messages, systemPrompt)
+    return {
+      content: data.content,
+      contextData: {},
+      recommendedProducts: data.recommendedProducts ?? [],
+      sessionId: data.sessionId ?? sessionId,
+    }
+  } catch (edgeFnError) {
+    // 2. Edge Function 미배포 또는 오류 시 로컬 Mock 모드로 전환
+    console.warn('[RAG] Edge Function 불가, Mock 모드로 전환:', edgeFnError.message)
 
-  // 4. 추천 제품 파싱 (AI가 [[제품추천: ...]] 형식으로 반환한 경우)
-  const mentionedProductIds = parseMentionedProducts(aiContent)
-  const finalRecommended = mentionedProductIds.length > 0
-    ? recommendedProducts.filter((p) => mentionedProductIds.includes(p.id))
-    : recommendedProducts.slice(0, 3)
+    const { recommendedProducts } = await buildRagContext(userMessage)
+    const aiContent = getMockResponse(userMessage)
 
-  // 5. DB 저장 (세션 생성 또는 기존 세션 사용)
-  const activeSessionId = await saveToDatabase({
-    sessionId,
-    userMessage,
-    aiContent,
-    contextData,
-    recommendedProducts: finalRecommended,
-  })
+    const mentionedProductIds = parseMentionedProducts(aiContent)
+    const finalRecommended = mentionedProductIds.length > 0
+      ? recommendedProducts.filter((p) => mentionedProductIds.includes(p.id))
+      : recommendedProducts.slice(0, 3)
 
-  return {
-    content: aiContent.replace(/\[\[제품추천:.*?\]\]/g, '').trim(),
-    contextData,
-    recommendedProducts: finalRecommended,
-    sessionId: activeSessionId,
+    const activeSessionId = await saveToDatabase({
+      sessionId,
+      userMessage,
+      aiContent,
+      contextData: {},
+      recommendedProducts: finalRecommended,
+    })
+
+    return {
+      content: aiContent.replace(/\[\[제품추천:.*?\]\]/g, '').trim(),
+      contextData: {},
+      recommendedProducts: finalRecommended,
+      sessionId: activeSessionId,
+    }
   }
 }
 
@@ -262,4 +277,80 @@ async function saveToDatabase({ sessionId, userMessage, aiContent, contextData, 
   ])
 
   return activeSessionId
+}
+
+// ============================================================
+// 스트리밍 채팅 처리
+// ============================================================
+
+/**
+ * 스트리밍 방식으로 AI 응답 수신
+ * @param {string} userMessage
+ * @param {Array<{role:string,content:string}>} history
+ * @param {string|null} sessionId
+ * @param {function} onDelta - 텍스트 청크 콜백 (delta: string) => void
+ * @param {function} onMeta - 메타 정보 콜백 ({sessionId, recommendedProducts}) => void
+ * @returns {Promise<void>}
+ */
+export async function processChatStream(userMessage, history = [], sessionId = null, onDelta, onMeta) {
+  const authHeader = {}
+  const session = await supabase.auth.getSession()
+  const token = session.data.session?.access_token
+  if (token) {
+    authHeader['Authorization'] = `Bearer ${token}`
+  }
+
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+      ...authHeader,
+    },
+    body: JSON.stringify({
+      message: userMessage,
+      history: history.map(({ role, content }) => ({ role, content })),
+      sessionId,
+      stream: true,
+    }),
+  })
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: '알 수 없는 오류' }))
+    throw new Error(err.error ?? `HTTP ${response.status}`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? '' // 마지막 불완전 라인 보존
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const data = line.slice(6).trim()
+        if (!data) continue
+
+        try {
+          const parsed = JSON.parse(data)
+          if (parsed.type === 'meta' && onMeta) {
+            onMeta({ sessionId: parsed.sessionId, recommendedProducts: parsed.recommendedProducts ?? [] })
+          } else if (parsed.type === 'delta' && onDelta) {
+            onDelta(parsed.content ?? '')
+          }
+        } catch {
+          // JSON 파싱 실패 무시
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
 }

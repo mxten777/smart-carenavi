@@ -1,53 +1,11 @@
-import OpenAI from 'openai'
-
-const rawKey = import.meta.env.VITE_OPENAI_API_KEY
-const apiKey = rawKey && !rawKey.startsWith('sk-your') ? rawKey : null
-
-if (!apiKey) {
-  console.warn(
-    '[OpenAI] VITE_OPENAI_API_KEY가 설정되지 않았습니다. AI 기능이 비활성화됩니다.'
-  )
-}
-
 /**
- * ⚠️  보안 주의: dangerouslyAllowBrowser = true 는 MVP 전용입니다.
- *  - API 키가 브라우저 네트워크 탭에 노출됩니다.
- *  - 프로덕션 배포 전에 반드시 Supabase Edge Function 프록시로 교체하세요.
- *  - PROGRESS.md Phase 2-A 항목 참고
+ * OpenAI API는 Supabase Edge Function (supabase/functions/chat)을 통해
+ * 서버사이드에서 호출됩니다. 이 파일은 Edge Function을 사용할 수 없을 때
+ * (로컬 개발, 미배포 상태 등) 사용하는 Mock 응답을 제공합니다.
  */
-export const openai = apiKey
-  ? new OpenAI({
-      apiKey,
-      dangerouslyAllowBrowser: true,
-    })
-  : null
 
-/**
- * AI 상담 응답 생성
- * @param {Array<{role: string, content: string}>} messages - 대화 히스토리
- * @param {string} systemPrompt - RAG context가 포함된 시스템 프롬프트
- * @returns {Promise<string>} AI 응답 텍스트
- */
-export async function generateChatResponse(messages, systemPrompt) {
-  if (!openai) {
-    return getMockResponse(messages[messages.length - 1]?.content ?? '')
-  }
-
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...messages.slice(-10), // 최근 10개 메시지로 컨텍스트 제한
-    ],
-    temperature: 0.7,
-    max_tokens: 800,
-  })
-
-  return response.choices[0].message.content
-}
-
-/** OpenAI 미설정 시 Mock 응답 */
-function getMockResponse(userMessage) {
+/** Edge Function 미배포 / 오류 시 Mock 응답 */
+export function getMockResponse(userMessage) {
   const msg = userMessage.toLowerCase()
 
   // 1. 장기요양등급 전반
